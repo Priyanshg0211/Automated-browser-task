@@ -2,6 +2,8 @@ from flask import Flask, render_template, request, jsonify
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
 import requests
@@ -9,36 +11,68 @@ import json
 import schedule
 import time
 import sqlite3
-import google.generativeai as genai
+import random
+from twocaptcha import TwoCaptcha
 
-# Configure Gemini API
-genai.configure(api_key="AIzaSyByVR9XKpvvWDzshhxUKidy3WFFaV--sio")  # Replace with your Gemini API key
-
-# Initialize Gemini model
-model = genai.GenerativeModel('gemini-pro')
+# Configure 2Captcha API
+solver = TwoCaptcha("your-2captcha-api-key")  # Replace with your 2Captcha API key
 
 # Initialize Flask app
 app = Flask(__name__)
 
-# Function to handle CAPTCHA using Gemini
-def handle_captcha(image_url):
-    response = model.generate_content(f"Solve the CAPTCHA in this image: {image_url}")
-    return response.text
+# Function to solve CAPTCHA using 2Captcha
+def solve_captcha(sitekey, url):
+    try:
+        result = solver.recaptcha(sitekey=sitekey, url=url)
+        return result["code"]
+    except Exception as e:
+        return f"Error solving CAPTCHA: {e}"
 
 # Function to fill forms using Selenium
 def fill_form(url, form_data):
+    driver = None
     try:
-        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+        # Configure Chrome options
+        options = webdriver.ChromeOptions()
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+
+        # Use selenium-stealth to avoid detection
+        from selenium_stealth import stealth
+        stealth(
+            driver,
+            languages=["en-US", "en"],
+            vendor="Google Inc.",
+            platform="Win32",
+            webgl_vendor="Intel Inc.",
+            renderer="Intel Iris OpenGL Engine",
+            fix_hairline=True,
+        )
+
         driver.get(url)
+
+        # Parse the form data
         data = json.loads(form_data)
         for key, value in data.items():
-            driver.find_element(By.NAME, key).send_keys(value)
-        driver.find_element(By.NAME, "submit").click()
+            # Wait for the input field to be present
+            element = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.NAME, key))
+            )
+            element.send_keys(value)
+            time.sleep(random.uniform(1, 3))  # Add a random delay
+
+        # Submit the form
+        submit_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.NAME, "submit"))
+        )
+        submit_button.click()
         return "Form filled successfully!"
     except Exception as e:
         return f"Error filling form: {e}"
     finally:
-        driver.quit()
+        if driver:
+            driver.quit()
 
 # Function to scrape data using BeautifulSoup
 def scrape_data(url):
@@ -52,27 +86,56 @@ def scrape_data(url):
 
 # Function to navigate websites using Selenium
 def navigate_website(url, actions):
+    driver = None
     try:
-        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+        # Configure Chrome options
+        options = webdriver.ChromeOptions()
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+
+        # Use selenium-stealth to avoid detection
+        from selenium_stealth import stealth
+        stealth(
+            driver,
+            languages=["en-US", "en"],
+            vendor="Google Inc.",
+            platform="Win32",
+            webgl_vendor="Intel Inc.",
+            renderer="Intel Iris OpenGL Engine",
+            fix_hairline=True,
+        )
+
         driver.get(url)
-        
+
         # Parse the actions JSON string into a Python object
         actions = json.loads(actions)
-        
+
         # Ensure actions is a list of dictionaries
         if isinstance(actions, list):
             for action in actions:
-                if action["type"] == "click":
-                    driver.find_element(By.XPATH, action["element"]).click()
-                elif action["type"] == "input":
-                    driver.find_element(By.XPATH, action["element"]).send_keys(action["value"])
+                if action["type"] == "input":
+                    # Wait for the input field to be present
+                    element = WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.XPATH, action["element"]))
+                    )
+                    element.send_keys(action["value"])
+                    time.sleep(random.uniform(1, 3))  # Add a random delay
+                elif action["type"] == "click":
+                    # Wait for the button to be clickable
+                    element = WebDriverWait(driver, 10).until(
+                        EC.element_to_be_clickable((By.XPATH, action["element"]))
+                    )
+                    element.click()
+                    time.sleep(random.uniform(1, 3))  # Add a random delay
             return "Navigation completed successfully!"
         else:
             return "Error: Actions must be a list of dictionaries."
     except Exception as e:
         return f"Error navigating website: {e}"
     finally:
-        driver.quit()
+        if driver:
+            driver.quit()
 
 # Function to schedule tasks
 def schedule_task(task_type, url, data, time):
